@@ -81,19 +81,21 @@ impl RotatingTriangle {
                     in vec2 in_x_y_rot;
 
                     out vec2 position;
+                    out vec2 vertex_color;
 
                     void main() {
                         position = vec2(in_position.x, in_position.y);
+                        vertex_color = in_x_y_rot;
                         gl_Position = vec4(in_position.x - 0.5, in_position.y - 0.5, 0.0, 1.0);
                     }
                 "#),
                 format!("{}\n{}", shader_version.version_declaration(), r#"
                     precision mediump float;
-                    in vec2 position;
+                    in vec2 vertex_color;
                     out vec4 color;
                     uniform float blue;
                     void main() {
-                        color = vec4(position, blue, 1.0);
+                        color = vec4(vertex_color, blue, 1.0);
                     }
                 "#),
             );
@@ -131,45 +133,41 @@ impl RotatingTriangle {
         unsafe {
             // gl.clear(COLOR_BUFFER_BIT);
 
-            gl.use_program(Some(self.program));
 
             gl.clear(glow::COLOR_BUFFER_BIT);
 
-            self.fill_vertex_buffer(gl, angle);
+            let count = self.fill_vertex_buffer(gl, angle);
 
-            gl.draw_arrays(LINE_LOOP, 0, 4);
+            gl.draw_arrays(LINE_LOOP, 0, count.try_into().unwrap());
         }
     }
 
-    unsafe fn fill_vertex_buffer(&self, gl: &Context, angle: f32) {
+    unsafe fn fill_vertex_buffer(&self, gl: &Context, angle: f32) -> usize {
         // let triangle_vertices = [0.5f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32, (angle/100.0) % 3.0];
         // let triangle_vertices_u8: &[u8] = core::slice::from_raw_parts(
         //     triangle_vertices.as_ptr() as *const u8,
         //     triangle_vertices.len() * core::mem::size_of::<f32>(),
         // );
         let stone_vertices = [
-            0.0f32, 0.0f32, 5.0f32,  5.0f32, 5.0f32,
-            1.0f32, 0.0f32, 5.0f32,  5.0f32, 5.0f32,
-            1.0f32, 0.5f32, 0.0f32,  0.0f32, 0.0f32,
-            0.5f32, 1.0f32, 0.0f32,  0.0f32, 0.0f32,
+            0.0f32, 0.0f32, 5.0f32,  1.0f32, 0.0f32,
+            1.0f32, 0.0f32, 5.0f32,  1.0f32, 1.0f32,
+            1.0f32, 0.5f32, 0.0f32,  0.0f32, 1.0f32,
+            0.5f32, 1.0f32, 0.0f32,  1.0f32, 1.0f32,
         ];
         let stone_vertices_u8: &[u8] = core::slice::from_raw_parts(
             stone_vertices.as_ptr() as *const u8,
             stone_vertices.len() * core::mem::size_of::<f32>(),
         );
 
+        gl.use_program(Some(self.program));
         // upload the data
         gl.bind_buffer(ARRAY_BUFFER, Some(self.vertex_buffer_object));
         gl.buffer_data_u8_slice(ARRAY_BUFFER, stone_vertices_u8, STATIC_DRAW);
 
         // We now construct a vertex array to describe the format of the input buffer
         gl.bind_vertex_array(Some(self.vertex_array));
-        
-        gl.enable_vertex_attrib_array(0); //vec3 stone origin pos
-        gl.vertex_attrib_pointer_f32(0, 3, FLOAT, false, 20, 0);
 
-        gl.enable_vertex_attrib_array(1); //vec2 stone x and y rot
-        gl.vertex_attrib_pointer_f32(1, 2, FLOAT, false, 20, 12);
+        stone_vertices.len()
     }
 }
 
@@ -220,7 +218,15 @@ unsafe fn init_vertex_buffer(gl: &Context) -> (NativeBuffer, NativeVertexArray) 
 
     // We construct a buffer
     let vbo = gl.create_buffer().unwrap();
+
     gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
+    gl.enable_vertex_attrib_array(0); //vec3 stone origin pos
+    gl.vertex_attrib_pointer_f32(0, 3, FLOAT, false, 20, 0);
+
+    gl.enable_vertex_attrib_array(1); //vec2 stone x and y rot
+    gl.vertex_attrib_pointer_f32(1, 2, FLOAT, false, 20, 12);
+
+    gl.bind_vertex_array(None);
 
     (vbo, vao)
 }
