@@ -63,8 +63,9 @@ impl UI3d {
 
 struct RotatingTriangle {
     program: Program,
-    vertex_array: VertexArray,
-    vertex_buffer_object: NativeBuffer
+    vertex_array: NativeVertexArray,
+    vertex_buffer_object: NativeBuffer,
+    instance_vertex_buffer_object: NativeBuffer
 }
 
 #[allow(unsafe_code)] // we need unsafe code to use glow
@@ -76,35 +77,35 @@ impl RotatingTriangle {
         println!("{}", shader_version.version_declaration());
         unsafe {
             let (vertex_shader_source, fragment_shader_source) = (
-                format!("{}\n{}", shader_version.version_declaration(), r#"
-                    in vec3 in_position;
-                    in vec2 in_x_y_rot;
+                r#"#version 330 core
+                layout (location = 0) in vec2 aPos;
+                layout (location = 1) in vec3 aColor;
+                layout (location = 2) in vec2 aOffset;
 
-                    out vec2 position;
-                    out vec2 vertex_color;
+                out vec3 fColor;
 
-                    void main() {
-                        position = vec2(in_position.x, in_position.y);
-                        vertex_color = in_x_y_rot;
-                        gl_Position = vec4(in_position.x - 0.5, in_position.y - 0.5, 0.0, 1.0);
-                    }
-                "#),
-                format!("{}\n{}", shader_version.version_declaration(), r#"
-                    precision mediump float;
-                    in vec2 vertex_color;
-                    out vec4 color;
-                    uniform float blue;
-                    void main() {
-                        color = vec4(vertex_color, blue, 1.0);
-                    }
-                "#),
-            );
+                void main()
+                {
+                    fColor = aColor;
+                    gl_Position = vec4(aPos + aOffset, 0.0, 1.0);
+                }
+                "#,
+                r#"#version 330 core
+                out vec4 FragColor;
 
-            let program = create_program(&gl, vertex_shader_source.as_str(), fragment_shader_source.as_str());
+                in vec3 fColor;
+
+                void main()
+                {
+                    FragColor = vec4(fColor, 1.0);
+                }
+                "#);
+
+            let program = create_program(&gl, vertex_shader_source, fragment_shader_source);
             gl.use_program(Some(program));
 
             // Create a vertex buffer and vertex array object
-            let (vbo, vao) = init_vertex_buffer(&gl);
+            let (vbo, i_vbo, vao) = init_vertex_buffer(&gl);
             
             gl.clear_color(0.1, 0.2, 0.3, 1.0);
 
@@ -115,6 +116,7 @@ impl RotatingTriangle {
                 program,
                 vertex_array: vao,
                 vertex_buffer_object: vbo,
+                instance_vertex_buffer_object: i_vbo
             })
         }
     }
@@ -131,43 +133,44 @@ impl RotatingTriangle {
     fn paint(&self, gl: &Context, angle: f32) {
         use HasContext as _;
         unsafe {
-            // gl.clear(COLOR_BUFFER_BIT);
-
-
             gl.clear(glow::COLOR_BUFFER_BIT);
 
             let count = self.fill_vertex_buffer(gl, angle);
 
-            gl.draw_arrays(LINE_LOOP, 0, count.try_into().unwrap());
+            gl.draw_arrays_instanced(TRIANGLES, 0, 6, count.try_into().unwrap());
+            gl.bind_vertex_array(None);
         }
     }
 
     unsafe fn fill_vertex_buffer(&self, gl: &Context, angle: f32) -> usize {
-        // let triangle_vertices = [0.5f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32, (angle/100.0) % 3.0];
-        // let triangle_vertices_u8: &[u8] = core::slice::from_raw_parts(
-        //     triangle_vertices.as_ptr() as *const u8,
-        //     triangle_vertices.len() * core::mem::size_of::<f32>(),
-        // );
-        let stone_vertices = [
-            0.0f32, 0.0f32, 5.0f32,  1.0f32, 0.0f32,
-            1.0f32, 0.0f32, 5.0f32,  1.0f32, 1.0f32,
-            1.0f32, 0.5f32, 0.0f32,  0.0f32, 1.0f32,
-            0.5f32, 1.0f32, 0.0f32,  1.0f32, 1.0f32,
-        ];
-        let stone_vertices_u8: &[u8] = core::slice::from_raw_parts(
-            stone_vertices.as_ptr() as *const u8,
-            stone_vertices.len() * core::mem::size_of::<f32>(),
-        );
-
         gl.use_program(Some(self.program));
-        // upload the data
-        gl.bind_buffer(ARRAY_BUFFER, Some(self.vertex_buffer_object));
-        gl.buffer_data_u8_slice(ARRAY_BUFFER, stone_vertices_u8, STATIC_DRAW);
-
-        // We now construct a vertex array to describe the format of the input buffer
         gl.bind_vertex_array(Some(self.vertex_array));
 
-        stone_vertices.len()
+        let mut translations: [f32; 200] = [0.0; 200];
+        let offset = 0.001f32 * angle;
+        let mut index = 0;
+        for y in -5..5 {
+            for x in -5..5 {
+                translations[index] = x as f32 / 10.0 + offset;
+                index += 1;
+                translations[index] = y as f32 / 10.0 + offset;
+                index += 1;
+            }
+        }
+        let translations_u8: &[u8] = core::slice::from_raw_parts(
+            translations.as_ptr() as *const u8,
+            translations.len() * core::mem::size_of::<f32>(),
+        );
+
+        gl.bind_buffer(ARRAY_BUFFER, Some(self.instance_vertex_buffer_object));
+        gl.buffer_data_u8_slice(ARRAY_BUFFER, translations_u8, STATIC_DRAW);
+        gl.enable_vertex_attrib_array(2); //vec2 stone vertices positions
+        gl.vertex_attrib_pointer_f32(2, 2, FLOAT, false, 2*4, 0);
+
+        gl.bind_buffer(ARRAY_BUFFER, None);
+        gl.vertex_attrib_divisor(2, 1); // tell OpenGL this is an instanced vertex attribute
+
+        100
     }
 }
 
@@ -211,24 +214,40 @@ unsafe fn create_program(
     program
 }
 
-unsafe fn init_vertex_buffer(gl: &Context) -> (NativeBuffer, NativeVertexArray) {
+unsafe fn init_vertex_buffer(gl: &Context) -> (NativeBuffer, NativeBuffer, NativeVertexArray) {
     // We now construct a vertex array to describe the format of the input buffer
+    
     let vao = gl.create_vertex_array().unwrap();
     gl.bind_vertex_array(Some(vao));
 
+    let quad_vertices = [
+    // positions     // colors
+    -0.05f32,  0.05f32,  1.0f32, 0.0f32, 0.0f32,
+     0.05f32, -0.05f32,  0.0f32, 1.0f32, 0.0f32,
+    -0.05f32, -0.05f32,  0.0f32, 0.0f32, 1.0f32,
+
+    -0.05f32,  0.05f32,  1.0f32, 0.0f32, 0.0f32,
+     0.05f32, -0.05f32,  0.0f32, 1.0f32, 0.0f32,   
+     0.05f32,  0.05f32,  0.0f32, 1.0f32, 1.0f32
+    ];
+    let quad_vertices_u8: &[u8] = core::slice::from_raw_parts(
+        quad_vertices.as_ptr() as *const u8,
+        quad_vertices.len() * core::mem::size_of::<f32>(),
+    );
+
     // We construct a buffer
-    let vbo = gl.create_buffer().unwrap();
+    let quad_vbo = gl.create_buffer().unwrap();
+    gl.bind_buffer(ARRAY_BUFFER, Some(quad_vbo));
+    gl.buffer_data_u8_slice(ARRAY_BUFFER, quad_vertices_u8, STATIC_DRAW);
+    gl.enable_vertex_attrib_array(0); //vec2 stone vertices positions
+    gl.vertex_attrib_pointer_f32(0, 2, FLOAT, false, 5*4, 0);
+    gl.enable_vertex_attrib_array(1); //vec3 stone vertices color
+    gl.vertex_attrib_pointer_f32(1, 3, FLOAT, false, 5*4, 2*4);
 
-    gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
-    gl.enable_vertex_attrib_array(0); //vec3 stone origin pos
-    gl.vertex_attrib_pointer_f32(0, 3, FLOAT, false, 20, 0);
-
-    gl.enable_vertex_attrib_array(1); //vec2 stone x and y rot
-    gl.vertex_attrib_pointer_f32(1, 2, FLOAT, false, 20, 12);
+    let instance_vbo = gl.create_buffer().unwrap();
 
     gl.bind_vertex_array(None);
-
-    (vbo, vao)
+    (quad_vbo, instance_vbo, vao)
 }
 
 unsafe fn set_uniform(gl: &Context, program: NativeProgram, name: &str, value: f32) {
