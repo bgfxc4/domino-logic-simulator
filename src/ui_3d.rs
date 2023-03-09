@@ -1,5 +1,4 @@
 use std::sync::Arc;
-
 use eframe::egui_glow;
 use egui::mutex::Mutex;
 use egui_glow::glow;
@@ -8,9 +7,8 @@ use glow::*;
 pub struct UI3d {
     /// Behind an `Arc<Mutex<…>>` so we can pass it to [`egui::PaintCallback`] and paint later.
     canvas: Arc<Mutex<Canvas>>,
-    angle: f32,
     cam_pos: cgmath::Point3<f32>,
-    cam_look_at: cgmath::Point3<f32>,
+    cam_angle: cgmath::Vector2<f32>,
 }
 
 impl UI3d {
@@ -18,35 +16,18 @@ impl UI3d {
         let gl = cc.gl.as_ref()?;
         Some(Self {
             canvas: Arc::new(Mutex::new(Canvas::new(gl)?)),
-            angle: 0.0,
             cam_pos: cgmath::Point3{x: 1.0f32, y: 2.0f32, z: 2.0f32},
-            cam_look_at: cgmath::Point3{x: 0f32, y: 0f32, z: 0f32},
+            cam_angle: cgmath::Vector2{x: 0f32, y: 0f32},
         })
     }
 }
 
 impl eframe::App for UI3d {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let (keys_down, screen_rect) = ctx.input(|i| (i.keys_down.to_owned(), i.screen_rect));
-        if keys_down.contains(&egui::Key::S) {
-            self.cam_pos.z += 0.01f32;
-            self.cam_look_at.z += 0.01f32;
-        }
-        if keys_down.contains(&egui::Key::W) {
-            self.cam_pos.z -= 0.01f32;
-            self.cam_look_at.z -= 0.01f32;
-        }
-        if keys_down.contains(&egui::Key::D) {
-            self.cam_pos.x += 0.01f32;
-            self.cam_look_at.x += 0.01f32;
-        }
-        if keys_down.contains(&egui::Key::A) {
-            self.cam_pos.x -= 0.01f32;
-            self.cam_look_at.x -= 0.01f32;
-        }
+        let (keys_down, mods, screen_rect) = ctx.input(|i| (i.keys_down.to_owned(), i.modifiers, i.screen_rect));
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.custom_painting(ui);
+            self.custom_painting(ui, screen_rect, keys_down, mods);
         });
     }
 
@@ -58,23 +39,17 @@ impl eframe::App for UI3d {
 }
 
 impl UI3d {
-    fn custom_painting(&mut self, ui: &mut egui::Ui) {
+    fn custom_painting(&mut self, ui: &mut egui::Ui, screen_rect: egui::Rect, keys_down: std::collections::HashSet<egui::Key>, mods: egui::Modifiers) {
         let (rect, response) =
-            ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+            ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
 
-        self.angle = match response.hover_pos() {
-            Some(pos) => pos.x,
-            None => 0.0
-        };
+        let drag = response.drag_delta();
+        let mvp = self.calc_mvp(keys_down, mods, drag, screen_rect);
 
-        // Clone locals so we can move them into the paint callback:
-        let angle = self.angle;
         let canvas = self.canvas.clone();
-        let cam_pos = self.cam_pos.clone();
-        let cam_look_at = self.cam_look_at.clone();
 
         let cb = egui_glow::CallbackFn::new(move |_info, painter| {
-            canvas.lock().paint(painter.gl(), angle, cam_pos, cam_look_at);
+            canvas.lock().paint(painter.gl(), mvp);
         });
 
         let callback = egui::PaintCallback {
@@ -82,6 +57,53 @@ impl UI3d {
             callback: Arc::new(cb),
         };
         ui.painter().add(callback);
+    }
+
+    fn calc_mvp(&mut self, keys_down: std::collections::HashSet<egui::Key>, mods: egui::Modifiers, drag: egui::Vec2, screen_rect: egui::Rect) -> cgmath::Matrix4<f32> {
+        self.cam_angle.x -= drag.x * 0.003f32;
+        self.cam_angle.y -= drag.y * 0.003f32;
+
+        let direction = cgmath::Vector3{
+            x: cgmath::Angle::cos(cgmath::Rad(self.cam_angle.y)) * cgmath::Angle::sin(cgmath::Rad(self.cam_angle.x)),
+            y: cgmath::Angle::sin(cgmath::Rad(self.cam_angle.y)),
+            z: cgmath::Angle::cos(cgmath::Rad(self.cam_angle.y)) * cgmath::Angle::cos(cgmath::Rad(self.cam_angle.x))
+        };
+        
+        let mut move_direction = direction;
+        move_direction.y = 0.0;
+
+        let right_vec = cgmath::Vector3{
+            x: cgmath::Angle::sin(cgmath::Rad(self.cam_angle.x - 90.0)),
+            y: 0.0,
+            z: cgmath::Angle::cos(cgmath::Rad(self.cam_angle.x - 90.0))
+        };
+
+        // let mut up_vec = right_vec.cross(direction);
+        let up_vec = cgmath::Vector3{x: 0.0, y: 1.0, z: 0.0};
+
+        if keys_down.contains(&egui::Key::S) {
+            self.cam_pos -= move_direction * 0.01f32;
+        }
+        if keys_down.contains(&egui::Key::W) {
+            self.cam_pos += move_direction * 0.01f32;
+        }
+        if keys_down.contains(&egui::Key::D) {
+            self.cam_pos += right_vec * 0.01f32;
+        }
+        if keys_down.contains(&egui::Key::A) {
+            self.cam_pos -= right_vec * 0.01f32;
+        }
+        if mods.shift {
+            self.cam_pos += up_vec * 0.01f32;
+        }
+        if mods.ctrl {
+            self.cam_pos -= up_vec * 0.01f32;
+        }
+
+        let proj_mat = cgmath::perspective(cgmath::Deg(60f32), screen_rect.aspect_ratio(), 0.1f32, 100f32);
+        let view_mat = cgmath::Matrix4::look_at_rh(self.cam_pos, self.cam_pos + direction, up_vec);
+        let mat = proj_mat * view_mat;
+        mat
     }
 }
 
@@ -111,7 +133,7 @@ impl Canvas {
                 void main()
                 {
                     fColor = aColor;
-                    gl_Position = view_mat * vec4(pos_model_space, 1.0);
+                    gl_Position = view_mat * vec4(pos_model_space.x + aOffset.x, pos_model_space.y, pos_model_space.z + aOffset.y, 1.0);
                 }
                 "#,
                 r#"#version 330 core
@@ -151,30 +173,30 @@ impl Canvas {
         }
     }
 
-    fn paint(&self, gl: &Context, angle: f32, cam_pos: cgmath::Point3<f32>, cam_look_at: cgmath::Point3<f32>) {
+    fn paint(&self, gl: &Context, mvp: cgmath::Matrix4<f32>) {
         use HasContext as _;
         unsafe {
             gl.clear(glow::COLOR_BUFFER_BIT);
 
-            let count = self.fill_vertex_buffer(gl, angle, cam_pos, cam_look_at);
+            let count = self.fill_vertex_buffer(gl, mvp);
 
             gl.draw_arrays_instanced(TRIANGLES, 0, 12*3, count.try_into().unwrap());
             gl.bind_vertex_array(None);
         }
     }
 
-    unsafe fn fill_vertex_buffer(&self, gl: &Context, angle: f32, cam_pos: cgmath::Point3<f32>, cam_look_at: cgmath::Point3<f32>) -> usize {
+    unsafe fn fill_vertex_buffer(&self, gl: &Context, mvp: cgmath::Matrix4<f32>) -> usize {
         gl.use_program(Some(self.program));
         gl.bind_vertex_array(Some(self.vertex_array));
 
         let mut translations: [f32; 200] = [0.0; 200];
-        let offset = 0.001f32 * angle;
+        let offset = 2f32;
         let mut index = 0;
         for y in -5..5 {
             for x in -5..5 {
-                translations[index] = x as f32 / 10.0 + offset;
+                translations[index] = x as f32 * 4.0 + offset;
                 index += 1;
-                translations[index] = y as f32 / 10.0 + offset;
+                translations[index] = y as f32 * 4.0 + offset;
                 index += 1;
             }
         }
@@ -190,13 +212,9 @@ impl Canvas {
 
         gl.bind_buffer(ARRAY_BUFFER, None);
         gl.vertex_attrib_divisor(2, 1); // tell OpenGL this is an instanced vertex attribute
-                                        //
-        let uniform_location = gl.get_uniform_location(self.program, "view_mat");
-        let proj_mat = cgmath::perspective(cgmath::Deg(60f32), 16f32 / 9f32, 1f32, 10f32);
-        let view_mat = cgmath::Matrix4::look_at_rh(cam_pos, cam_look_at, cgmath::Vector3{x: 0f32, y: 1f32, z: 0f32});
-        let mat = proj_mat * view_mat;
-        let f32_mat: [[f32; 4]; 4] = mat.into();
 
+        let uniform_location = gl.get_uniform_location(self.program, "view_mat");
+        let f32_mat: [[f32; 4]; 4] = mvp.into();
         gl.uniform_matrix_4_f32_slice(uniform_location.as_ref(), false, f32_mat.into_iter().flatten().collect::<Vec<f32>>().as_ref());
 
         100
