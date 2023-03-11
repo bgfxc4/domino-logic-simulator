@@ -49,11 +49,12 @@ impl UI3d {
 
         let drag = response.drag_delta();
         let mvp = self.calc_mvp(keys_down, mods, drag, screen_rect);
+        let cam_pos = self.cam_pos.to_owned();
 
         let canvas = self.canvas.clone();
 
         let cb = egui_glow::CallbackFn::new(move |_info, painter| {
-            canvas.lock().paint(painter.gl(), mvp);
+            canvas.lock().paint(painter.gl(), mvp, cam_pos);
         });
 
         let callback = egui::PaintCallback {
