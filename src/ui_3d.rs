@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Mutex as stdMutex, sync::Arc};
 use cgmath::InnerSpace;
 use eframe::egui_glow::{self, *};
 use egui::mutex::Mutex;
@@ -7,20 +7,33 @@ pub mod shaders;
 pub mod canvas;
 use canvas::*;
 
+use crate::simulator::Simulator;
+
+#[derive(Clone)]
+pub struct RenderMatrices {
+    perspective: cgmath::Matrix4<f32>,
+    view: cgmath::Matrix4<f32>,
+    rotation: Option<cgmath::Matrix4<f32>>,
+    translation: Option<cgmath::Matrix4<f32>>,
+    scale: Option<cgmath::Matrix4<f32>>,
+}
+
 pub struct UI3d {
     /// Behind an `Arc<Mutex<…>>` so we can pass it to [`egui::PaintCallback`] and paint later.
     canvas: Arc<Mutex<Canvas>>,
     cam_pos: cgmath::Point3<f32>,
     cam_angle: cgmath::Vector2<f32>,
+    simulator: Arc<stdMutex<Simulator>>
 }
 
 impl UI3d {
-    pub fn new<'a>(cc: &'a eframe::CreationContext<'a>) -> Option<Self> {
+    pub fn new<'a>(cc: &'a eframe::CreationContext<'a>, simulator: Arc<stdMutex<Simulator>>) -> Option<Self> {
         let gl = cc.gl.as_ref()?;
         Some(Self {
-            canvas: Arc::new(Mutex::new(Canvas::new(gl)?)),
+            canvas: Arc::new(Mutex::new(Canvas::new(gl, simulator.clone())?)),
             cam_pos: cgmath::Point3{x: 1.0f32, y: 2.0f32, z: 2.0f32},
             cam_angle: cgmath::Vector2{x: 0f32, y: 0f32},
+            simulator
         })
     }
 }
@@ -48,13 +61,13 @@ impl UI3d {
             ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
 
         let drag = response.drag_delta();
-        let mvp = self.calc_mvp(keys_down, mods, drag, screen_rect);
+        let render_mats = self.calc_mvp(keys_down, mods, drag, screen_rect);
         let cam_pos = self.cam_pos.to_owned();
 
         let canvas = self.canvas.clone();
 
         let cb = egui_glow::CallbackFn::new(move |_info, painter| {
-            canvas.lock().paint(painter.gl(), mvp, cam_pos);
+            canvas.lock().paint(painter.gl(), render_mats.clone(), cam_pos);
         });
 
         let callback = egui::PaintCallback {
@@ -64,7 +77,7 @@ impl UI3d {
         ui.painter().add(callback);
     }
 
-    fn calc_mvp(&mut self, keys_down: std::collections::HashSet<egui::Key>, mods: egui::Modifiers, drag: egui::Vec2, screen_rect: egui::Rect) -> cgmath::Matrix4<f32> {
+    fn calc_mvp(&mut self, keys_down: std::collections::HashSet<egui::Key>, mods: egui::Modifiers, drag: egui::Vec2, screen_rect: egui::Rect) -> RenderMatrices {
         self.cam_angle.x -= drag.x * 0.003f32;
         self.cam_angle.y -= drag.y * 0.003f32;
 
@@ -102,7 +115,7 @@ impl UI3d {
 
         let proj_mat = cgmath::perspective(cgmath::Deg(60f32), screen_rect.aspect_ratio(), 0.1f32, 100f32);
         let view_mat = cgmath::Matrix4::look_at_rh(self.cam_pos, self.cam_pos + direction, up_vec);
-        let mat = proj_mat * view_mat;
-        mat
+        // let mat = proj_mat * view_mat;
+        RenderMatrices { perspective: proj_mat, view: view_mat, rotation: None, translation: None, scale: None }
     }
 }

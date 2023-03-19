@@ -1,29 +1,32 @@
-use crate::ui_3d::UI3d;
+use std::{sync::Arc, sync::Mutex};
+
+use crate::{ui_3d::UI3d, simulator::Simulator};
 
 pub struct MainWindow {
     value: f32,
-    gt: Option<UI3d>
+    gt: Option<UI3d>,
+    simulator: Arc<Mutex<Simulator>>,
 }
 
 impl MainWindow {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, simulator: Arc<Mutex<Simulator>>) -> Self {
         // if let Some(storage) = cc.storage {
         //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         // }
         let slf = Self {
-            gt: UI3d::new(_cc),
-            value: 2.4
+            gt: UI3d::new(cc, simulator.clone()),
+            value: 2.4,
+            simulator: simulator.clone(),
         };
         slf
     }
 }
 
 impl eframe::App for MainWindow {
-
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let Self { value, gt } = self;
+        let Self { value, gt, simulator} = self;
 
         #[cfg(not(target_arch = "wasm32"))] // no File->Quit on web pages!
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
