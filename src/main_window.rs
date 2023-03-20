@@ -1,10 +1,10 @@
 use std::{sync::Arc, sync::Mutex};
 
-use crate::{ui_3d::UI3d, simulator::Simulator};
+use crate::{ui_3d::UI3d, simulator::{Simulator, Domino}};
 
 pub struct MainWindow {
     value: f32,
-    gt: Option<UI3d>,
+    ui_3d: Option<UI3d>,
     simulator: Arc<Mutex<Simulator>>,
 }
 
@@ -14,7 +14,7 @@ impl MainWindow {
         //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         // }
         let slf = Self {
-            gt: UI3d::new(cc, simulator.clone()),
+            ui_3d: UI3d::new(cc, simulator.clone()),
             value: 2.4,
             simulator: simulator.clone(),
         };
@@ -26,7 +26,7 @@ impl eframe::App for MainWindow {
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let Self { value, gt, simulator} = self;
+        // let Self { value, ui_3d, simulator: _simulator} = self;
 
         #[cfg(not(target_arch = "wasm32"))] // no File->Quit on web pages!
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -41,17 +41,34 @@ impl eframe::App for MainWindow {
         });
 
         egui::Window::new("Window").show(ctx, |ui| {
-            ui.heading("Side Panel");
+            let mut s = self.simulator.lock().unwrap();
+            let domino_id = match &self.ui_3d {
+                Some(u) => u.selected_domino_id,
+                None => None
+            };
+            let domino: Option<&mut Domino> = s.dominos.iter_mut().find(|d| domino_id == Some(d.id));
 
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut "asd".to_string().to_owned());
-            });
-
-            ui.add(egui::Slider::new(value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                *value += 1.0;
+            ui.heading("Domino inspector");
+            
+            if domino_id.is_none() {
+                ui.label("No domino is selected.");
+                ui.label("Selected a domino by clicking on it to see it in this inspector.");
+                return
+            } else if domino.is_none() {
+                ui.label("No domino is selected.");
+                ui.label("Selected a domino by clicking on it to see it in this inspector.");
+                return
             }
+            let domino = domino.unwrap();
+            
+            ui.label(domino.id.to_string());
+
+            ui.add(egui::Slider::new(&mut domino.position.x, -10.0..=10.0).text("x-Position"));
+            ui.add(egui::Slider::new(&mut domino.position.y, -10.0..=10.0).text("y-Position"));
+            ui.add(egui::Slider::new(&mut domino.position.z, -10.0..=10.0).text("z-Position"));
+
+            ui.add(egui::Slider::new(&mut domino.rotation_y, 0.0..=360.0).text("y-Rotation"));
+            ui.add(egui::Slider::new(&mut domino.fall_rotation, -90.0..=90.0).text("fall-rotation"));
 
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
@@ -65,8 +82,10 @@ impl eframe::App for MainWindow {
                 ui.label(".");
             });
         });
-        match gt {
-            Some(g) => (g as &mut dyn eframe::App).update(ctx, frame),
+
+        match &mut self.ui_3d {
+            // Some(g) => (&mut g as &mut dyn eframe::App).update(ctx, frame),
+            Some(g) => g.update(ctx, frame),
             None => {}
         }
     }

@@ -11,7 +11,7 @@ trait Renderable {
     unsafe fn paint(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>);
     unsafe fn fill_vbo(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>);
     fn is_instanced(&self) -> bool;
-    unsafe fn fill_i_vbo(&mut self, _gl: &Context, _model_mats: &Vec<cgmath::Matrix4<f32>>, _rot_mats: &Vec<cgmath::Matrix4<f32>>) {
+    unsafe fn fill_i_vbo(&mut self, _gl: &Context, _model_mats: &Vec<(u32, cgmath::Matrix4<f32>)>, _rot_mats: &Vec<cgmath::Matrix4<f32>>) {
         panic!("This struct is not an instanced RenderObject and thus has no instanced vertex object");
     }
 }
@@ -67,7 +67,7 @@ impl Renderable for InstancedRenderObject {
         gl.uniform_3_f32_slice(cam_pos_location.as_ref(), &cam_pos);
     }
 
-    unsafe fn fill_i_vbo(&mut self, gl: &Context, model_mats: &Vec<cgmath::Matrix4<f32>>, rot_mats: &Vec<cgmath::Matrix4<f32>>) { 
+    unsafe fn fill_i_vbo(&mut self, gl: &Context, model_mats: &Vec<(u32, cgmath::Matrix4<f32>)>, rot_mats: &Vec<cgmath::Matrix4<f32>>) { 
         gl.use_program(Some(self.program));
         gl.bind_vertex_array(Some(self.vao));
 
@@ -78,49 +78,50 @@ impl Renderable for InstancedRenderObject {
     fn is_instanced(&self) -> bool { true }
 }
 
-unsafe fn upload_vertex_attrib_model_and_rot(gl: &Context, model_mats: &Vec<cgmath::Matrix4<f32>>, rot_mats: &Vec<cgmath::Matrix4<f32>>, location: u32, vbo: &NativeBuffer) {
-        let mats: Vec<&cgmath::Matrix4<f32>> = model_mats.iter().zip(rot_mats.iter()).map(|t| { vec![t.0, t.1]}).flatten().collect();
-        let values: Vec<f32> = mats.iter().map(|m| { vec![m.x, m.y, m.z, m.w] }).flatten().map(|v| { vec![v.x, v.y, v.z, v.w] }).flatten().collect();
+unsafe fn upload_vertex_attrib_model_and_rot(gl: &Context, model_mats: &Vec<(u32, cgmath::Matrix4<f32>)>, rot_mats: &Vec<cgmath::Matrix4<f32>>, location: u32, vbo: &NativeBuffer) {
+    let model_mats: Vec<cgmath::Matrix4<f32>> = model_mats.iter().map(|m| m.1).collect();
+    let mats: Vec<&cgmath::Matrix4<f32>> = model_mats.iter().zip(rot_mats.iter()).map(|t| { vec![t.0, t.1]}).flatten().collect();
+    let values: Vec<f32> = mats.iter().map(|m| { vec![m.x, m.y, m.z, m.w] }).flatten().map(|v| { vec![v.x, v.y, v.z, v.w] }).flatten().collect();
 
-        let values_u8: &[u8] = core::slice::from_raw_parts(
-            values.as_slice().as_ptr() as *const u8,
-            values.len() * core::mem::size_of::<f32>(),
-        );
+    let values_u8: &[u8] = core::slice::from_raw_parts(
+        values.as_slice().as_ptr() as *const u8,
+        values.len() * core::mem::size_of::<f32>(),
+    );
 
-        gl.bind_buffer(ARRAY_BUFFER, Some(*vbo));
-        gl.buffer_data_u8_slice(ARRAY_BUFFER, values_u8, STATIC_DRAW);
-        gl.enable_vertex_attrib_array(location+0); // mat4 model_mat -> 4x vec4 columns
-        gl.enable_vertex_attrib_array(location+1);
-        gl.enable_vertex_attrib_array(location+2);
-        gl.enable_vertex_attrib_array(location+3);
+    gl.bind_buffer(ARRAY_BUFFER, Some(*vbo));
+    gl.buffer_data_u8_slice(ARRAY_BUFFER, values_u8, STATIC_DRAW);
+    gl.enable_vertex_attrib_array(location+0); // mat4 model_mat -> 4x vec4 columns
+    gl.enable_vertex_attrib_array(location+1);
+    gl.enable_vertex_attrib_array(location+2);
+    gl.enable_vertex_attrib_array(location+3);
 
-        gl.enable_vertex_attrib_array(location+4+0);
-        gl.enable_vertex_attrib_array(location+4+1);
-        gl.enable_vertex_attrib_array(location+4+2);
-        gl.enable_vertex_attrib_array(location+4+3);
+    gl.enable_vertex_attrib_array(location+4+0);
+    gl.enable_vertex_attrib_array(location+4+1);
+    gl.enable_vertex_attrib_array(location+4+2);
+    gl.enable_vertex_attrib_array(location+4+3);
 
-        let stride: i32 = 16 * 4 * 2; 
+    let stride: i32 = 16 * 4 * 2; 
 
-        gl.vertex_attrib_pointer_f32(location+0, 4, FLOAT, false, stride, 0*4*4);
-        gl.vertex_attrib_pointer_f32(location+1, 4, FLOAT, false, stride, 1*4*4);
-        gl.vertex_attrib_pointer_f32(location+2, 4, FLOAT, false, stride, 2*4*4);
-        gl.vertex_attrib_pointer_f32(location+3, 4, FLOAT, false, stride, 3*4*4);
+    gl.vertex_attrib_pointer_f32(location+0, 4, FLOAT, false, stride, 0*4*4);
+    gl.vertex_attrib_pointer_f32(location+1, 4, FLOAT, false, stride, 1*4*4);
+    gl.vertex_attrib_pointer_f32(location+2, 4, FLOAT, false, stride, 2*4*4);
+    gl.vertex_attrib_pointer_f32(location+3, 4, FLOAT, false, stride, 3*4*4);
 
-        gl.vertex_attrib_pointer_f32(location+4+0, 4, FLOAT, false, stride, 4*4*4);
-        gl.vertex_attrib_pointer_f32(location+4+1, 4, FLOAT, false, stride, 5*4*4);
-        gl.vertex_attrib_pointer_f32(location+4+2, 4, FLOAT, false, stride, 6*4*4);
-        gl.vertex_attrib_pointer_f32(location+4+3, 4, FLOAT, false, stride, 7*4*4);
+    gl.vertex_attrib_pointer_f32(location+4+0, 4, FLOAT, false, stride, 4*4*4);
+    gl.vertex_attrib_pointer_f32(location+4+1, 4, FLOAT, false, stride, 5*4*4);
+    gl.vertex_attrib_pointer_f32(location+4+2, 4, FLOAT, false, stride, 6*4*4);
+    gl.vertex_attrib_pointer_f32(location+4+3, 4, FLOAT, false, stride, 7*4*4);
 
-        gl.bind_buffer(ARRAY_BUFFER, None);
-        gl.vertex_attrib_divisor(location+0, 1); // tell OpenGL this is an instanced vertex attribute    
-        gl.vertex_attrib_divisor(location+1, 1);
-        gl.vertex_attrib_divisor(location+2, 1);
-        gl.vertex_attrib_divisor(location+3, 1);
+    gl.bind_buffer(ARRAY_BUFFER, None);
+    gl.vertex_attrib_divisor(location+0, 1); // tell OpenGL this is an instanced vertex attribute    
+    gl.vertex_attrib_divisor(location+1, 1);
+    gl.vertex_attrib_divisor(location+2, 1);
+    gl.vertex_attrib_divisor(location+3, 1);
 
-        gl.vertex_attrib_divisor(location+4+0, 1);  
-        gl.vertex_attrib_divisor(location+4+1, 1);
-        gl.vertex_attrib_divisor(location+4+2, 1);
-        gl.vertex_attrib_divisor(location+4+3, 1);
+    gl.vertex_attrib_divisor(location+4+0, 1);  
+    gl.vertex_attrib_divisor(location+4+1, 1);
+    gl.vertex_attrib_divisor(location+4+2, 1);
+    gl.vertex_attrib_divisor(location+4+3, 1);
 }
 
 impl Renderable for RenderObject {
@@ -204,24 +205,30 @@ impl Canvas {
 
             gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT); 
 
-            let mut model_mats: Vec<cgmath::Matrix4<f32>> = vec![];
-            let mut rot_mats: Vec<cgmath::Matrix4<f32>> = vec![];
-            for d in self.simulator.lock().unwrap().dominos.iter() {
-                let translation = cgmath::Matrix4::from_translation(cgmath::Vector3{ x: d.position.x, y: d.position.y, z: d.position.z });
-                let scale = cgmath::Matrix4::from_nonuniform_scale(d.scale.x, d.scale.y, d.scale.z);
-                let rotation_y: cgmath::Matrix4<f32> = cgmath::Matrix4::from_angle_y(cgmath::Deg(d.rotation_y));
-                let fall_rotation_axis = rotation_y * cgmath::Vector4::unit_x();
-                let fall_rotation = cgmath::Matrix4::from_axis_angle(cgmath::Vector3 {x: fall_rotation_axis.x, y: fall_rotation_axis.y, z: fall_rotation_axis.z}, cgmath::Deg(d.fall_rotation));
-                let rotation = fall_rotation * rotation_y;
+            let (model_mats, rot_mats) = self.get_model_mats_list();
 
-                model_mats.push(translation * rotation * scale);
-                rot_mats.push(rotation);
-            }
             self.domino_obj.fill_i_vbo(gl, &model_mats, &rot_mats);
             self.domino_obj.paint(gl, &render_mats, cam_pos, light_pos);
             self.light_obj.paint(gl, &render_mats, cam_pos, light_pos);
             self.ground_obj.paint(gl, &render_mats, cam_pos, light_pos);
         }
+    }
+
+    pub fn get_model_mats_list(&self) -> (Vec<(u32, cgmath::Matrix4<f32>)>, Vec<cgmath::Matrix4<f32>>) {
+        let mut model_mats: Vec<(u32, cgmath::Matrix4<f32>)> = vec![];
+        let mut rot_mats: Vec<cgmath::Matrix4<f32>> = vec![];
+        for d in self.simulator.lock().unwrap().dominos.iter() {
+            let translation = cgmath::Matrix4::from_translation(cgmath::Vector3{ x: d.position.x, y: d.position.y, z: d.position.z });
+            let scale = cgmath::Matrix4::from_nonuniform_scale(d.scale.x, d.scale.y, d.scale.z);
+            let rotation_y: cgmath::Matrix4<f32> = cgmath::Matrix4::from_angle_y(cgmath::Deg(d.rotation_y));
+            let fall_rotation_axis = rotation_y * cgmath::Vector4::unit_x();
+            let fall_rotation = cgmath::Matrix4::from_axis_angle(cgmath::Vector3 {x: fall_rotation_axis.x, y: fall_rotation_axis.y, z: fall_rotation_axis.z}, cgmath::Deg(d.fall_rotation));
+            let rotation = fall_rotation * rotation_y;
+
+            model_mats.push((d.id, translation * rotation * scale));
+            rot_mats.push(rotation);
+        }
+        (model_mats, rot_mats)
     }
 }
 
