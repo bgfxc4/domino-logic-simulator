@@ -8,8 +8,8 @@ use super::RenderMatrices;
 
 trait Renderable {
     unsafe fn destroy(&self, gl: &Context);
-    unsafe fn paint(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>);
-    unsafe fn fill_vbo(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>);
+    unsafe fn paint(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>, selected_id: Option<u32>);
+    unsafe fn fill_vbo(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>, selected_id: Option<u32>);
     fn is_instanced(&self) -> bool;
     unsafe fn fill_i_vbo(&mut self, _gl: &Context, _model_mats: &Vec<(u32, cgmath::Matrix4<f32>)>, _rot_mats: &Vec<cgmath::Matrix4<f32>>) {
         panic!("This struct is not an instanced RenderObject and thus has no instanced vertex object");
@@ -38,15 +38,15 @@ impl Renderable for InstancedRenderObject {
         gl.delete_buffer(self.i_vbo);
     }
 
-    unsafe fn paint(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>) {
-        self.fill_vbo(gl, render_mats, cam_pos, light_pos);
+    unsafe fn paint(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>, selected_id: Option<u32>) {
+        self.fill_vbo(gl, render_mats, cam_pos, light_pos, selected_id);
 
         gl.draw_arrays_instanced(TRIANGLES, 0, 12*3, self.render_count.try_into().unwrap());
         // gl.draw_arrays(TRIANGLES, 0, 12*3);
         gl.bind_vertex_array(None);
     }
 
-    unsafe fn fill_vbo(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>) {
+    unsafe fn fill_vbo(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>, selected_id: Option<u32>) {
         gl.use_program(Some(self.program));
         gl.bind_vertex_array(Some(self.vao));
 
@@ -65,6 +65,10 @@ impl Renderable for InstancedRenderObject {
         let cam_pos_location = gl.get_uniform_location(self.program, "camPos");
         let cam_pos: [f32; 3] = [cam_pos.x, cam_pos.y, cam_pos.z];
         gl.uniform_3_f32_slice(cam_pos_location.as_ref(), &cam_pos);
+
+        let id_location = gl.get_uniform_location(self.program, "selected_id");
+        let selected_id: f32 = if selected_id.is_some() { selected_id.unwrap() as f32 } else { -1.0 };
+        gl.uniform_1_f32(id_location.as_ref(), selected_id);
     }
 
     unsafe fn fill_i_vbo(&mut self, gl: &Context, model_mats: &Vec<(u32, cgmath::Matrix4<f32>)>, rot_mats: &Vec<cgmath::Matrix4<f32>>) { 
@@ -79,13 +83,19 @@ impl Renderable for InstancedRenderObject {
 }
 
 unsafe fn upload_vertex_attrib_model_and_rot(gl: &Context, model_mats: &Vec<(u32, cgmath::Matrix4<f32>)>, rot_mats: &Vec<cgmath::Matrix4<f32>>, location: u32, vbo: &NativeBuffer) {
-    let model_mats: Vec<cgmath::Matrix4<f32>> = model_mats.iter().map(|m| m.1).collect();
-    let mats: Vec<&cgmath::Matrix4<f32>> = model_mats.iter().zip(rot_mats.iter()).map(|t| { vec![t.0, t.1]}).flatten().collect();
-    let values: Vec<f32> = mats.iter().map(|m| { vec![m.x, m.y, m.z, m.w] }).flatten().map(|v| { vec![v.x, v.y, v.z, v.w] }).flatten().collect();
+    // let model_mats: Vec<cgmath::Matrix4<f32>> = model_mats.iter().map(|m| m.1).collect();
+    // let mats: Vec<&cgmath::Matrix4<f32>> = model_mats.iter().zip(rot_mats.iter()).map(|t| { vec![t.0, t.1]}).flatten().collect();
+    // let values: Vec<f32> = mats.iter().map(|m| { vec![m.x, m.y, m.z, m.w] }).flatten().map(|v| { vec![v.x, v.y, v.z, v.w] }).flatten().collect();
+
+    let mats: Vec<(u32, cgmath::Matrix4<f32>, &cgmath::Matrix4<f32>)> = model_mats.iter().zip(rot_mats.iter()).map(|e| (e.0.0, e.0.1, e.1)).collect();
+    let values: Vec<f32> = mats.iter().map(|e| vec![e.1.x.x, e.1.x.y, e.1.x.z, e.1.x.w, e.1.y.x, e.1.y.y, e.1.y.z, e.1.y.w, e.1.z.x, e.1.z.y, e.1.z.z, e.1.z.w, e.1.w.x, e.1.w.y, e.1.w.z, e.1.w.w,
+                                            e.2.x.x, e.2.x.y, e.2.x.z, e.2.x.w, e.2.y.x, e.2.y.y, e.2.y.z, e.2.y.w, e.2.z.x, e.2.z.y, e.2.z.z, e.2.z.w, e.2.w.x, e.2.w.y, e.2.w.z, e.2.w.w, e.0 as f32]).flatten().collect();
 
     let values_u8: &[u8] = core::slice::from_raw_parts(
         values.as_slice().as_ptr() as *const u8,
-        values.len() * core::mem::size_of::<f32>(),
+        (values.len()+3) * core::mem::size_of::<f32>(), // TODO: figure out why "+3" is needed. If
+                                                        // left away, last elements of values are
+                                                        // not transferred to the shader
     );
 
     gl.bind_buffer(ARRAY_BUFFER, Some(*vbo));
@@ -100,7 +110,10 @@ unsafe fn upload_vertex_attrib_model_and_rot(gl: &Context, model_mats: &Vec<(u32
     gl.enable_vertex_attrib_array(location+4+2);
     gl.enable_vertex_attrib_array(location+4+3);
 
-    let stride: i32 = 16 * 4 * 2; 
+    gl.enable_vertex_attrib_array(location+4+4);
+
+    let stride: i32 = 16 * 4 * 2 + 4; // 16 f32s per matrix, 4 bytes per f32, 2 matrices and one
+                                      // u32 (4 bytes) as id
 
     gl.vertex_attrib_pointer_f32(location+0, 4, FLOAT, false, stride, 0*4*4);
     gl.vertex_attrib_pointer_f32(location+1, 4, FLOAT, false, stride, 1*4*4);
@@ -112,16 +125,20 @@ unsafe fn upload_vertex_attrib_model_and_rot(gl: &Context, model_mats: &Vec<(u32
     gl.vertex_attrib_pointer_f32(location+4+2, 4, FLOAT, false, stride, 6*4*4);
     gl.vertex_attrib_pointer_f32(location+4+3, 4, FLOAT, false, stride, 7*4*4);
 
+    gl.vertex_attrib_pointer_f32(location+4+4, 4, FLOAT, false, stride, 8*4*4);
+
     gl.bind_buffer(ARRAY_BUFFER, None);
     gl.vertex_attrib_divisor(location+0, 1); // tell OpenGL this is an instanced vertex attribute    
     gl.vertex_attrib_divisor(location+1, 1);
     gl.vertex_attrib_divisor(location+2, 1);
     gl.vertex_attrib_divisor(location+3, 1);
 
-    gl.vertex_attrib_divisor(location+4+0, 1);  
+    gl.vertex_attrib_divisor(location+4+0, 1);
     gl.vertex_attrib_divisor(location+4+1, 1);
     gl.vertex_attrib_divisor(location+4+2, 1);
     gl.vertex_attrib_divisor(location+4+3, 1);
+
+    gl.vertex_attrib_divisor(location+4+4, 1);
 }
 
 impl Renderable for RenderObject {
@@ -131,15 +148,15 @@ impl Renderable for RenderObject {
         gl.delete_buffer(self.vbo);
     }
 
-    unsafe fn paint(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>) {    
-        self.fill_vbo(gl, render_mats, cam_pos, light_pos);
+    unsafe fn paint(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>, selected_id: Option<u32>) {    
+        self.fill_vbo(gl, render_mats, cam_pos, light_pos, selected_id);
 
         gl.draw_arrays(TRIANGLES, 0, 12*3);
         // gl.draw_arrays(TRIANGLES, 0, 12*3);
         gl.bind_vertex_array(None);
     }
 
-    unsafe fn fill_vbo(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>) {
+    unsafe fn fill_vbo(&self, gl: &Context, render_mats: &RenderMatrices, cam_pos: cgmath::Point3<f32>, light_pos: cgmath::Point3<f32>, selected_id: Option<u32>) {
         gl.use_program(Some(self.program));
         gl.bind_vertex_array(Some(self.vao));
 
@@ -158,6 +175,10 @@ impl Renderable for RenderObject {
         let cam_pos_location = gl.get_uniform_location(self.program, "camPos");
         let cam_pos: [f32; 3] = [cam_pos.x, cam_pos.y, cam_pos.z];
         gl.uniform_3_f32_slice(cam_pos_location.as_ref(), &cam_pos);
+
+        let id_location = gl.get_uniform_location(self.program, "selected_id");
+        let selected_id: f32 = if selected_id.is_some() { selected_id.unwrap() as f32 } else { -1.0 };
+        gl.uniform_1_f32(id_location.as_ref(), selected_id);
     }
 
     fn is_instanced(&self) -> bool { false }
@@ -194,7 +215,7 @@ impl Canvas {
         }
     }
 
-    pub fn paint(&mut self, gl: &Context, render_mats: RenderMatrices, cam_pos: cgmath::Point3<f32>) {
+    pub fn paint(&mut self, gl: &Context, render_mats: RenderMatrices, cam_pos: cgmath::Point3<f32>, selected_id: Option<u32>) {
         let light_pos = cgmath::point3(0.0f32, 2.0f32, 0.0f32);
 
         unsafe {
@@ -208,9 +229,9 @@ impl Canvas {
             let (model_mats, rot_mats) = self.get_model_mats_list();
 
             self.domino_obj.fill_i_vbo(gl, &model_mats, &rot_mats);
-            self.domino_obj.paint(gl, &render_mats, cam_pos, light_pos);
-            self.light_obj.paint(gl, &render_mats, cam_pos, light_pos);
-            self.ground_obj.paint(gl, &render_mats, cam_pos, light_pos);
+            self.domino_obj.paint(gl, &render_mats, cam_pos, light_pos, selected_id);
+            self.light_obj.paint(gl, &render_mats, cam_pos, light_pos, selected_id);
+            self.ground_obj.paint(gl, &render_mats, cam_pos, light_pos, selected_id);
         }
     }
 

@@ -40,7 +40,7 @@ impl eframe::App for MainWindow {
             });
         });
 
-        egui::Window::new("Window").show(ctx, |ui| {
+        egui::Window::new("Domino Inspector").show(ctx, |ui| {
             let mut s = self.simulator.lock().unwrap();
             let domino_id = match &self.ui_3d {
                 Some(u) => u.selected_domino_id,
@@ -48,17 +48,12 @@ impl eframe::App for MainWindow {
             };
             let domino: Option<&mut Domino> = s.dominos.iter_mut().find(|d| domino_id == Some(d.id));
 
-            ui.heading("Domino inspector");
-            
-            if domino_id.is_none() {
-                ui.label("No domino is selected.");
-                ui.label("Selected a domino by clicking on it to see it in this inspector.");
-                return
-            } else if domino.is_none() {
+            if domino_id.is_none() || domino.is_none() {
                 ui.label("No domino is selected.");
                 ui.label("Selected a domino by clicking on it to see it in this inspector.");
                 return
             }
+
             let domino = domino.unwrap();
             
             ui.label(domino.id.to_string());
@@ -70,17 +65,31 @@ impl eframe::App for MainWindow {
             ui.add(egui::Slider::new(&mut domino.rotation_y, 0.0..=360.0).text("y-Rotation"));
             ui.add(egui::Slider::new(&mut domino.fall_rotation, -90.0..=90.0).text("fall-rotation"));
 
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.label("powered by ");
-                ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-                ui.label(" and ");
-                ui.hyperlink_to(
-                    "eframe",
-                    "https://github.com/emilk/egui/tree/master/crates/eframe",
-                    );
-                ui.label(".");
-            });
+            if ui.button("Delete domino").clicked() {
+                let idx = s.dominos.iter().position(|d| Some(d.id) == self.ui_3d.as_ref().unwrap().selected_domino_id);
+                if idx.is_some() {
+                    s.dominos.remove(idx.unwrap());
+                    self.ui_3d.as_mut().unwrap().selected_domino_id = None;
+                }
+            }
+        });
+
+        egui::Window::new("Domino Creator").show(ctx, |ui| {
+            if ui.button("Create domino").clicked() {
+                let mut s = self.simulator.lock().unwrap();
+                let id = match s.dominos.last() {
+                    Some(d) => d.id+1,
+                    None => 0
+                };
+                s.dominos.push(Domino {
+                    fall_rotation: 0.0,
+                    id,
+                    rotation_y: 0.0,
+                    position: cgmath::point3(0.0, 0.0, 0.0),
+                    scale: cgmath::vec3(1.0, 1.0, 1.0),
+                });
+                self.ui_3d.as_mut().unwrap().selected_domino_id = Some(id);
+            }
         });
 
         match &mut self.ui_3d {

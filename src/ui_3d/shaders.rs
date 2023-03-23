@@ -4,13 +4,14 @@ pub mod dominos {
         layout (location = 1) in vec3 aNormal;
         layout (location = 3) in mat4 model_mat;
         layout (location = 7) in mat4 rot_mat;
-        // layout (location = 2) in vec3 model_pos;
+        layout (location = 11) in float id;
 
         uniform mat4 view_mat;
         uniform mat4 perspective_mat;
 
         out vec3 Normal;
         out vec3 FragPos;
+        flat out float out_id;
 
         void main()
         {
@@ -19,6 +20,8 @@ pub mod dominos {
             FragPos = vec3(model_mat * vec4(pos_world_space, 1.0));
             mat4 mvp = perspective_mat * view_mat * model_mat;
             gl_Position = mvp * vec4(pos_world_space, 1.0);
+
+            out_id = id;
         }
         "#;
     pub const FRAGMENT_SHADER: &str =
@@ -27,15 +30,20 @@ pub mod dominos {
 
         in vec3 Normal;
         in vec3 FragPos;
+        flat in float out_id;
 
         uniform vec3 lightPos;
         uniform vec3 camPos;
+        uniform float selected_id;
 
         void main()
         {
             vec3 lightColor = vec3(1.0, 1.0, 1.0);
-            vec3 objectColor = vec3(1.0, 0.0, 0.0);
-            
+            vec3 objectColor = vec3(1.0, 0.0, 0.0); 
+            if (selected_id == out_id) {
+                objectColor = vec3(0.0, 0.0, 1.0);
+            }
+
             float ambientStrength = 0.1;
             vec3 ambient = ambientStrength * lightColor;
 
@@ -52,7 +60,6 @@ pub mod dominos {
 
             vec3 result = (diffuse + ambient + specular) * objectColor;
             FragColor = vec4(result, 1.0);
-            // FragColor = vec4(Normal, 1.0);
         }
         "#;
 

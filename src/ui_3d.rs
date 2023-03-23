@@ -1,7 +1,7 @@
 use std::{sync::Mutex as stdMutex, sync::Arc};
 use cgmath::InnerSpace;
 use eframe::egui_glow::{self, *};
-use egui::mutex::Mutex;
+use egui::{mutex::Mutex, Pos2};
 
 pub mod shaders;
 pub mod canvas;
@@ -46,12 +46,12 @@ impl eframe::App for UI3d {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let (keys_down, mods, screen_rect, pointer) = ctx.input(|i| (i.keys_down.to_owned(), i.modifiers, i.screen_rect, i.pointer.to_owned()));
 
-        if pointer.any_click() {
-            self.get_clicked_ray_obb_intersection(pointer.interact_pos().unwrap(), screen_rect);
-        }
+        // if pointer.any_click() {
+        //     self.get_clicked_ray_obb_intersection(pointer.interact_pos().unwrap(), screen_rect);
+        // }
         let frame = egui::Frame::none().inner_margin(egui::Margin::same(0.0)).outer_margin(egui::Margin::same(0.0));
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-            self.custom_painting(ui, screen_rect, keys_down, mods);
+            self.custom_painting(ui, screen_rect, keys_down, mods, pointer.interact_pos());
         });
         ctx.request_repaint();
     }
@@ -64,18 +64,23 @@ impl eframe::App for UI3d {
 }
 
 impl UI3d {
-    fn custom_painting(&mut self, ui: &mut egui::Ui, screen_rect: egui::Rect, keys_down: std::collections::HashSet<egui::Key>, mods: egui::Modifiers) {
+    fn custom_painting(&mut self, ui: &mut egui::Ui, screen_rect: egui::Rect, keys_down: std::collections::HashSet<egui::Key>, mods: egui::Modifiers, mouse_pos: Option<Pos2>) {
         let (rect, response) =
-            ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
+            ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+
+        if response.clicked() {
+            self.get_clicked_ray_obb_intersection(mouse_pos.unwrap_or_default(), screen_rect);
+        }
 
         let drag = response.drag_delta();
         let render_mats = self.calc_mvp(keys_down, mods, drag, screen_rect);
         let cam_pos = self.cam_pos.to_owned();
 
         let canvas = self.canvas.clone();
+        let selected_domino_id = self.selected_domino_id.to_owned();
 
         let cb = egui_glow::CallbackFn::new(move |_info, painter| {
-            canvas.lock().paint(painter.gl(), render_mats.clone(), cam_pos);
+            canvas.lock().paint(painter.gl(), render_mats.clone(), cam_pos, selected_domino_id);
         });
 
         let callback = egui::PaintCallback {
@@ -192,7 +197,7 @@ impl UI3d {
                     continue 'mats_loop;
                 }
             }
-            println!("intersection distance: {}, id: {}", t_min, id);
+            // println!("intersection distance: {}, id: {}", t_min, id);
             self.selected_domino_id = Some(id);
             break;
         }
